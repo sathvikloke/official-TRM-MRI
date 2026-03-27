@@ -1,21 +1,20 @@
-# TRM-MRI: Transformer Recurrent MRI Reconstruction with Adaptive Halting
+# TRM-MRI
 
-## Overview
-TRM-MRI is a deep learning framework for accelerated MRI reconstruction
-using recursive refinement and Adaptive Computation Time (ACT).
-
-## Key Contributions
-- Adaptive halting mechanism (ACT-based inference)
-- Iterative latent refinement (TRM core)
-- Improved reconstruction efficiency vs fixed-step models
+TRM-MRI is a standalone MRI reconstruction framework based on the [Tiny Recursive Models (TRM)](https://github.com/SamsungSAILMontreal/TinyRecursiveModels) developed by SamsungSAILMontreal. This project adapts the recursive TRM architecture for MRI k-space reconstruction, enabling small, fast, and accurate models with physics-based iterative refinement.
 
 ## Features
-- FastMRI-compatible pipeline
-- Plug-and-play inference script
-- Visualization of reconstruction progression
 
-## Setup
-pip install -r requirements.txt
+- Recursive refinement of MRI images with shared weights  
+- Lightweight TRM-based architecture for small model size  
+- Physics-based data consistency using FFTs  
+- Support for continuous-valued MRI outputs  
+- MSE / PSNR evaluation metrics  
+- Configurable recursion steps for speed vs. quality tradeoff  
 
-## Run Inference
-python inference/run_inference.py ...
+## Installation
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/YourUsername/TRM-MRI.git
+cd TRM-MRI
