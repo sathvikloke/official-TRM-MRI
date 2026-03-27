@@ -16,5 +16,5 @@ TRM-MRI is a standalone MRI reconstruction framework based on the [Tiny Recursiv
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/YourUsername/TRM-MRI.git
+git clone https://github.com/sathvikloke/official-TRM-MRI.git
 cd TRM-MRI
