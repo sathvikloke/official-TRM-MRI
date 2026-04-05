@@ -1,0 +1,57 @@
+# config/cfg_mri_pretrain.yaml
+#
+# Main config for TRM-MRI training.
+# Use this file instead of cfg_pretrain.yaml when training on MRI data.
+#
+# Example (single GPU):
+#   python pretrain.py --config-name cfg_mri_pretrain \
+#       data_paths="[data/mri-knee]" \
+#       epochs=50000 eval_interval=5000 \
+#       lr=1e-4 global_batch_size=4 ema=True
+#
+# Example (4 GPUs):
+#   torchrun --nproc-per-node 4 pretrain.py --config-name cfg_mri_pretrain \
+#       data_paths="[data/mri-knee]" \
+#       epochs=50000 eval_interval=5000 \
+#       lr=1e-4 ema=True
+
+defaults:
+  - arch: trm_mri
+  - _self_
+
+hydra:
+  output_subdir: null
+
+# ── Data ────────────────────────────────────────────────────────────
+# Override on the command line: data_paths="[data/mri-knee]"
+data_paths: ['data/mri-knee']
+data_paths_test: []
+
+# No evaluators for MRI (ARC evaluator not applicable)
+evaluators: []
+
+# ── Training hyperparams ─────────────────────────────────────────────
+global_batch_size: 4
+
+epochs: 50000
+eval_interval: 5000
+checkpoint_every_eval: False
+
+lr: 1e-4
+lr_min_ratio: 1.0
+lr_warmup_steps: 500
+
+beta1: 0.9
+beta2: 0.95
+weight_decay: 0.1
+
+# Unused for MRI but required by PretrainConfig schema
+puzzle_emb_lr: 1e-2
+puzzle_emb_weight_decay: 0.1
+
+seed: 0
+min_eval_interval: 0
+
+ema: True
+ema_rate: 0.999
+freeze_weights: False
