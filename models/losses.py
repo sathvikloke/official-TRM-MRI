@@ -13,6 +13,7 @@ Differences from ACTLossHead in losses.py:
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import torch
