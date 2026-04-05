@@ -1,103 +1,122 @@
+"""
+models/losses_mri.py
+
+MRI loss head for the TRM-MRI pipeline.
+Modelled after ACTLossHead in models/losses.py.
+
+Label format:
+    Labels are (B, 2, H*W) complex images [real|imag] normalised by scale.
+    Model outputs pred_complex of same shape.
+    Loss = MSE on magnitude: |pred| vs |label|
+    PSNR = 20 * log10(1 / sqrt(MSE_magnitude + 1e-8))
+
+Fixes applied:
+    - q_halt_loss only supervises HALTED elements (weight=0 for non-halted)
+    - import math removed (was unused)
+    - Loss/metric naming consistent with pretrain.py logging conventions
+"""
+
 from typing import Any, Tuple, Dict, Sequence, Optional
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-import math
-
-IGNORE_LABEL_ID = -100
 
 
-def s(x, epsilon=1e-30):
-    return torch.where(
-        x<0,
-        1/(1-x+ epsilon),
-        x + 1
-    )
+class MRILossHead(nn.Module):
+    """
+    Wraps TinyRecursiveReasoningModel_MRI.
+    Matches ACTLossHead calling convention for pretrain.py compatibility:
 
+        new_carry, loss, metrics, preds, all_finish = loss_head(
+            carry=carry, batch=batch, return_keys=return_keys
+        )
+    """
 
-def log_stablemax(x, dim=-1):
-    s_x = s(x)
-    return torch.log(s_x/torch.sum(s_x, dim=dim, keepdim=True))
-
-
-def stablemax_cross_entropy(logits, labels, ignore_index: int = -100, valid_mask=None):
-    logprobs = log_stablemax(logits.to(torch.float64), dim=-1)
-
-    if valid_mask is None:
-        valid_mask = (labels != ignore_index)
-    transformed_labels = torch.where(valid_mask, labels, 0)
-    prediction_logprobs = torch.gather(logprobs, index=transformed_labels.to(torch.long).unsqueeze(-1), dim=-1).squeeze(-1)
-
-    return -torch.where(valid_mask, prediction_logprobs, 0)
-
-
-def softmax_cross_entropy(logits, labels, ignore_index: int = -100):
-    # Cast logits to f32
-    # Flatten logits
-    return F.cross_entropy(logits.to(torch.float32).view(-1, logits.shape[-1]), labels.to(torch.long).view(-1), ignore_index=ignore_index, reduction="none").view(labels.shape)
-
-
-class ACTLossHead(nn.Module):
-    def __init__(self, model: nn.Module, loss_type: str):
+    def __init__(self, model: nn.Module):
         super().__init__()
         self.model = model
-        self.loss_fn = globals()[loss_type]
-        
+
     def initial_carry(self, *args, **kwargs):
-        return self.model.initial_carry(*args, **kwargs)  # type: ignore
+        return self.model.initial_carry(*args, **kwargs)
 
     def forward(
         self,
-        return_keys: Sequence[str],
-        # Model args
-        **model_kwargs,
+        carry:       Any,
+        batch:       Dict[str, torch.Tensor],
+        return_keys: Sequence[str] = (),
     ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
-        # Model logits
-        # B x SeqLen x D
-        new_carry, outputs = self.model(**model_kwargs)
-        labels = new_carry.current_data["labels"]
+
+        # Model forward
+        new_carry, outputs = self.model(carry=carry, batch=batch)
+
+        # labels: (B, 2, H*W) complex image [real|imag]
+        # pred:   (B, 2, H*W) complex image [real|imag]
+        labels       = new_carry.current_data["labels"].float()   # (B, 2, H*W)
+        pred_complex = outputs["pred_complex"].float()             # (B, 2, H*W)
+        halted       = new_carry.halted                           # (B,) bool
+
+        # Magnitude of complex prediction and label
+        # magnitude = sqrt(real^2 + imag^2)  (B, H*W)
+        pred_mag  = torch.sqrt(pred_complex[:, 0] ** 2 + pred_complex[:, 1] ** 2 + 1e-12)
+        label_mag = torch.sqrt(labels[:, 0] ** 2 + labels[:, 1] ** 2 + 1e-12)
+
+        # ── MSE on magnitude ───────────────────────────────────────────────
+        mse_per_sample = F.mse_loss(pred_mag, label_mag, reduction="none").mean(dim=-1)  # (B,)
+        mse_loss       = mse_per_sample.mean()
+
+        # ── Q-halt loss  (halted elements only) ────────────────────────────
+        q_halt_logits = outputs["q_halt_logits"]    # (B,)
 
         with torch.no_grad():
-            # Preds
-            outputs["preds"] = torch.argmax(outputs["logits"], dim=-1)
+            median_mse  = mse_per_sample.median()
+            q_target    = (mse_per_sample < median_mse).float()
+            halt_weight = halted.float()            # 0 for non-halted, 1 for halted
 
-            # Correctness
-            mask = (labels != IGNORE_LABEL_ID)
-            loss_counts = mask.sum(-1)
-            loss_divisor = loss_counts.clamp_min(1).unsqueeze(-1)  # Avoid NaNs in division
+        q_halt_loss = F.binary_cross_entropy_with_logits(
+            q_halt_logits,
+            q_target,
+            weight=halt_weight,
+            reduction="sum",
+        ) / halt_weight.sum().clamp_min(1.0)
 
-            is_correct = mask & (torch.argmax(outputs["logits"], dim=-1) == labels)
-            seq_is_correct = is_correct.sum(-1) == loss_counts
-            
-            # Metrics (halted)
-            valid_metrics = new_carry.halted & (loss_counts > 0)
+        # ── Optional Q-continue loss ────────────────────────────────────────
+        q_continue_loss = torch.tensor(0.0, device=mse_loss.device)
+        if "target_q_continue" in outputs:
+            q_continue_loss = F.binary_cross_entropy_with_logits(
+                outputs["q_continue_logits"],
+                outputs["target_q_continue"],
+                reduction="mean",
+            )
+
+        # ── Total loss ─────────────────────────────────────────────────────
+        loss = mse_loss + 0.5 * (q_halt_loss + q_continue_loss)
+
+        # ── Metrics ────────────────────────────────────────────────────────
+        with torch.no_grad():
+            valid = halted & (label_mag.sum(dim=-1) > 0)
+            count = valid.sum().float().clamp_min(1.0)
+
+            mse_valid  = torch.where(valid, mse_per_sample, torch.zeros_like(mse_per_sample))
+
+            # PSNR = 20 * log10(1 / sqrt(MSE + eps)) = -10 * log10(MSE + eps)
+            psnr_valid = torch.where(
+                valid,
+                -10.0 * torch.log10(mse_per_sample.clamp_min(1e-8)),
+                torch.zeros_like(mse_per_sample),
+            )
+
             metrics = {
-                "count": valid_metrics.sum(),
-                
-                "accuracy":       torch.where(valid_metrics, (is_correct.to(torch.float32) / loss_divisor).sum(-1), 0).sum(),
-                "exact_accuracy": (valid_metrics & seq_is_correct).sum(),
-
-                "q_halt_accuracy": (valid_metrics & ((outputs["q_halt_logits"] >= 0) == seq_is_correct)).sum(),
-                "steps":          torch.where(valid_metrics, new_carry.steps, 0).sum(),
+                "count":       count,
+                "mse":         mse_valid.sum(),
+                "psnr":        psnr_valid.sum(),
+                "steps":       torch.where(halted, new_carry.steps.float(),
+                                           torch.zeros_like(new_carry.steps.float())).sum(),
+                "mse_loss":    mse_loss.detach(),
+                "q_halt_loss": q_halt_loss.detach(),
             }
 
-        # Losses
-
-        lm_loss = (self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID, valid_mask=mask) / loss_divisor).sum()
-        q_halt_loss = F.binary_cross_entropy_with_logits(outputs["q_halt_logits"], seq_is_correct.to(outputs["q_halt_logits"].dtype), reduction="sum")
-        metrics.update({
-            "lm_loss": lm_loss.detach(),
-            "q_halt_loss": q_halt_loss.detach(),
-        })
-        # Q continue (bootstrapping target loss); Alexia: This fits Q-learning, but seems totally unecessary
-        q_continue_loss = 0
-        if "target_q_continue" in outputs:
-            q_continue_loss = F.binary_cross_entropy_with_logits(outputs["q_continue_logits"], outputs["target_q_continue"], reduction="sum")
-
-            metrics["q_continue_loss"] = q_continue_loss.detach()
-        # Filter outputs for return
+        # ── Filter outputs for evaluators ──────────────────────────────────
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
 
-        return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all()
-
+        return new_carry, loss, metrics, detached_outputs, new_carry.halted.all()
