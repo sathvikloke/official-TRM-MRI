@@ -22,7 +22,7 @@ so the model can learn to predict images in [0,1] and the FFT of those predictio
 will sit in the right numerical range for data-consistency blending.
 
 Usage:
-    python -m dataset.build_mri_dataset \\
+    python -m datasets.build_mri_dataset \\
         --input-dir data/fastmri_knee_raw \\
         --output-dir data/mri-knee \\
         --acceleration 4
