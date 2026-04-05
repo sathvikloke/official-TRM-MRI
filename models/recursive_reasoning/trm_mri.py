@@ -69,10 +69,11 @@ class TinyRecursiveReasoningModel_MRIConfig(BaseModel):
     width:  int
 
     # Compat fields passed by pretrain.py but unused for MRI
-    seq_len:               int = 0   # overridden by height*width at runtime
-    vocab_size:            int = 1   # unused
-    num_puzzle_identifiers: int = 1  # unused
-    puzzle_emb_ndim:       int = 0   # must be 0 — no puzzle embeddings for MRI
+    seq_len:               int = 0     # overridden by height*width at runtime
+    vocab_size:            int = 1     # unused
+    num_puzzle_identifiers: int = 1    # unused
+    puzzle_emb_ndim:       int = 0     # must be 0 — no puzzle embeddings for MRI
+    causal:                bool = False  # unused; accepted so pretrain.py doesn't crash
 
     # Training
     batch_size: int = 1   # overridden by pretrain.py
