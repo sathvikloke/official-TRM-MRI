@@ -1,0 +1,52 @@
+# config/arch/trm_mri.yaml
+# Architecture config for TRM-MRI.
+# Based on config/arch/trm.yaml with MRI-specific changes.
+#
+# height and width MUST match your dataset.json.
+# fastMRI knee single-coil: typically 320x320
+# fastMRI knee multi-coil:  check your dataset.json after running build_mri_dataset.py
+
+name: recursive_reasoning.trm_mri@TinyRecursiveReasoningModel_MRI
+
+loss:
+  name: losses_mri@MRILossHead
+
+# Spatial dimensions -- must match the .npy data
+height: 320
+width:  320
+
+# Reasoning depth (from instructions)
+H_cycles: 3
+L_cycles: 4
+L_layers: 2
+H_layers: 0   # no separate H-level module in TRM; kept for compat
+
+# Transformer width
+hidden_size: 512
+num_heads:   8
+expansion:   4.0
+
+# CNN encoder intermediate channels
+cnn_channels: 32
+
+# No puzzle embeddings for MRI
+puzzle_emb_ndim: 0
+puzzle_emb_len:  0
+
+# Positional encoding
+pos_encodings: rope
+rope_theta:    10000.0
+
+# Forward precision
+forward_dtype: bfloat16
+
+# Normalisation
+rms_norm_eps: 1e-5
+
+# ACT halting
+halt_max_steps:        16
+halt_exploration_prob: 0.1
+no_ACT_continue:       True
+
+# Unused in MRI but kept so pretrain.py YAML parsing doesn't fail
+mlp_t: False
